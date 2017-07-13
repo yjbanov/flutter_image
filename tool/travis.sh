@@ -6,6 +6,9 @@
 
 # Fast fail the script on failures.
 set -e
+# Print commands to stdout
+set -x
 
-flutter analyze
+flutter packages get
+flutter analyze lib/ test/
 flutter test
