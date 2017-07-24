@@ -2,7 +2,6 @@
 // for details. All rights reserved. Use of this source code is governed by a
 // BSD-style license that can be found in the LICENSE file.
 
-
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
@@ -29,10 +28,12 @@ import 'package:flutter/widgets.dart';
 ///
 /// Example:
 ///
-///     return new FadeInImage(
-///       placeholder: new Image.memory(bytes),
-///       image: new Image.network('https://yourbackend.com/image.png'),
-///     );
+/// '''dart
+/// return new FadeInImage(
+///   placeholder: new Image.memory(bytes),
+///   image: new Image.network('https://yourbackend.com/image.png'),
+/// );
+/// '''
 ///
 /// Prefer [placeholder] that's already cached so that it can be displayed in
 /// the frame in which the [FadeInImage] is built.
@@ -167,38 +168,46 @@ class _FadeInImageState extends State<FadeInImage> with TickerProviderStateMixin
   }
 
   void _updatePhase() {
-    if (_phase == FadeInImagePhase.start) {
-      if (_imageInfo != null)
-        _phase = FadeInImagePhase.completed;
-      else
-        _phase = FadeInImagePhase.waiting;
-    } else if (_phase == FadeInImagePhase.waiting) {
-      if (_imageInfo != null) {
-        // Received image data. Begin placeholder fade-out.
-        _controller.duration = widget.fadeOutDuration;
-        _animation = new CurvedAnimation(
-          parent: _controller,
-          curve: widget.fadeOutCurve,
-        );
-        _phase = FadeInImagePhase.fadeOut;
-        _controller.reverse(from: 1.0);
-      }
-    } else if (_phase == FadeInImagePhase.fadeOut) {
-      if (_controller.status == AnimationStatus.dismissed) {
-        // Done fading out placeholder. Begin target image fade-in.
-        _controller.duration = widget.fadeInDuration;
-        _animation = new CurvedAnimation(
-          parent: _controller,
-          curve: widget.fadeInCurve,
-        );
-        _phase = FadeInImagePhase.fadeIn;
-        _controller.forward(from: 0.0);
-      }
-    } else if (_phase == FadeInImagePhase.fadeIn) {
-      if (_controller.status == AnimationStatus.completed) {
-        // Done finding in new image.
-        _phase = FadeInImagePhase.completed;
-      }
+    switch(_phase) {
+      case FadeInImagePhase.start:
+        if (_imageInfo != null)
+          _phase = FadeInImagePhase.completed;
+        else
+          _phase = FadeInImagePhase.waiting;
+        break;
+      case FadeInImagePhase.waiting:
+        if (_imageInfo != null) {
+          // Received image data. Begin placeholder fade-out.
+          _controller.duration = widget.fadeOutDuration;
+          _animation = new CurvedAnimation(
+            parent: _controller,
+            curve: widget.fadeOutCurve,
+          );
+          _phase = FadeInImagePhase.fadeOut;
+          _controller.reverse(from: 1.0);
+        }
+        break;
+      case FadeInImagePhase.fadeOut:
+        if (_controller.status == AnimationStatus.dismissed) {
+          // Done fading out placeholder. Begin target image fade-in.
+          _controller.duration = widget.fadeInDuration;
+          _animation = new CurvedAnimation(
+            parent: _controller,
+            curve: widget.fadeInCurve,
+          );
+          _phase = FadeInImagePhase.fadeIn;
+          _controller.forward(from: 0.0);
+        }
+        break;
+      case FadeInImagePhase.fadeIn:
+        if (_controller.status == AnimationStatus.completed) {
+          // Done finding in new image.
+          _phase = FadeInImagePhase.completed;
+        }
+        break;
+      case FadeInImagePhase.completed:
+        // Nothing to do.
+        break;
     }
   }
 
