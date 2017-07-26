@@ -57,11 +57,9 @@ class NetworkImageWithRetry extends ImageProvider<NetworkImageWithRetry> {
   /// This indirection is necessary because [defaultFetchStrategy] is used as
   /// the default constructor argument value, which requires that it be a const
   /// expression.
-  static final FetchStrategy _defaultFetchStrategyFunction = FetchStrategyBuilder.basic.build();
+  static final FetchStrategy _defaultFetchStrategyFunction = const FetchStrategyBuilder().build();
 
   /// The [FetchStrategy] that [NetworkImageWithRetry] uses by default.
-  ///
-  /// This strategy is build from [FetchStrategyBuilder.basic].
   static Future<FetchInstructions> defaultFetchStrategy(Uri uri, FetchFailure failure) {
     return _defaultFetchStrategyFunction(uri, failure);
   }
@@ -336,15 +334,6 @@ typedef bool TransientHttpStatusCodePredicate(int statusCode);
 /// those HTTP status codes considered transient by a
 /// [transientHttpStatusCodePredicate] function.
 class FetchStrategyBuilder {
-  static const FetchStrategyBuilder basic = const FetchStrategyBuilder(
-    timeout: const Duration(seconds: 30),
-    totalFetchTimeout: const Duration(minutes: 1),
-    initialPauseBetweenRetries: const Duration(seconds: 1),
-    maxAttempts: 5,
-    exponentialBackoffMultiplier: 2,
-    transientHttpStatusCodePredicate: defaultTransientHttpStatusCodePredicate,
-  );
-
   /// A list of HTTP status codes that can generally be retried.
   ///
   /// You may want to use a different list depending on the needs of your
@@ -362,12 +351,12 @@ class FetchStrategyBuilder {
   ///
   /// All parameters must be non-null.
   const FetchStrategyBuilder({
-    @required this.timeout,
-    @required this.totalFetchTimeout,
-    @required this.maxAttempts,
-    @required this.initialPauseBetweenRetries,
-    @required this.exponentialBackoffMultiplier,
-    @required this.transientHttpStatusCodePredicate,
+    this.timeout: const Duration(seconds: 30),
+    this.totalFetchTimeout: const Duration(minutes: 1),
+    this.maxAttempts: 5,
+    this.initialPauseBetweenRetries: const Duration(seconds: 1),
+    this.exponentialBackoffMultiplier: 2,
+    this.transientHttpStatusCodePredicate: defaultTransientHttpStatusCodePredicate,
   }) : assert(timeout != null),
        assert(totalFetchTimeout != null),
        assert(maxAttempts != null),
