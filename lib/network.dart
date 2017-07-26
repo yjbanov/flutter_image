@@ -19,7 +19,10 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 
-/// Fetches the given URL from the network, associating it with the given scale.
+/// Fetches the image from the given URL, associating it with the given scale.
+///
+/// If [fetchStrategy] is specified, uses it instead of the
+/// [defaultFetchStrategy] to obtain instructions for fetching the URL.
 ///
 /// The image will be cached regardless of cache headers from the server.
 class NetworkImageWithRetry extends ImageProvider<NetworkImageWithRetry> {
@@ -29,8 +32,9 @@ class NetworkImageWithRetry extends ImageProvider<NetworkImageWithRetry> {
   const NetworkImageWithRetry(this.url, { this.scale: 1.0, this.fetchStrategy: defaultFetchStrategy })
       : assert(url != null),
         assert(scale != null),
-        assert(defaultFetchStrategy != null);
+        assert(fetchStrategy != null);
 
+  /// The HTTP client used to download images.
   static final io.HttpClient _client = new io.HttpClient();
 
   /// The URL from which the image will be fetched.
@@ -39,58 +43,27 @@ class NetworkImageWithRetry extends ImageProvider<NetworkImageWithRetry> {
   /// The scale to place in the [ImageInfo] object of the image.
   final double scale;
 
-  /// The retry strategy used when the network fetch fails.
+  /// The strategy used to fetch the [url] and retry when the fetch fails.
   ///
   /// This function is called at least once and may be called multiple times.
-  /// The first time it is called, it is passed a `null` [FetchFailure].
-  /// Subsequent calls pass non-`null` [FetchFailure] values.
+  /// The first time it is called, it is passed a null [FetchFailure], which
+  /// indicates that this is the first attempt to fetch the [url]. Subsequent
+  /// calls pass non-null [FetchFailure] values, which indicate that previous
+  /// fetch attempts failed.
   final FetchStrategy fetchStrategy;
 
+  /// Used by [defaultFetchStrategy].
+  ///
+  /// This indirection is necessary because [defaultFetchStrategy] is used as
+  /// the default constructor argument value, which requires that it be a const
+  /// expression.
+  static final FetchStrategy _defaultFetchStrategyFunction = FetchStrategyBuilder.basic.build();
+
   /// The [FetchStrategy] that [NetworkImageWithRetry] uses by default.
-  static Future<FetchInstructions> defaultFetchStrategy(Uri uri, FetchFailure failure) async {
-    const Duration kTimeout = const Duration(seconds: 30);
-    const Duration kMaxFetchDuration = const Duration(minutes: 1);
-    const Duration kInitialPauseBetweenRetries = const Duration(seconds: 1);
-    const int kMaxAttempts = 5;
-
-    // These HTTP errors codes are of kind that could get fixes very quickly,
-    // unlike, say 404 - Page Not Found.
-    const List<int> kTransientHttpErrorCodes = const <int>[
-      0,   // Network error
-      408, // Request timeout
-      500, // Internal server error
-      502, // Bad gateway
-      503, // Service unavailable
-      504 // Gateway timeout
-    ];
-
-    if (failure == null) {
-      // First attempt. Just load.
-      return new FetchInstructions.attempt(
-        uri: uri,
-        timeout: kTimeout,
-      );
-    }
-
-    final bool isRetriableFailure = kTransientHttpErrorCodes.contains(failure.httpStatusCode) ||
-        failure.originalException is io.SocketException;
-
-    // If cannot retry, give up.
-    if (!isRetriableFailure ||  // retrying will not help
-        failure.totalDuration > kMaxFetchDuration ||  // taking too long
-        failure.attemptCount > kMaxAttempts) {  // too many attempts
-      return new FetchInstructions.giveUp(uri: uri);
-    }
-
-    // Exponential back-off.
-    final Duration pauseBetweenRetries = kInitialPauseBetweenRetries * math.pow(2, failure.attemptCount - 1);
-    await new Future<Null>.delayed(pauseBetweenRetries);
-
-    // Retry.
-    return new FetchInstructions.attempt(
-      uri: uri,
-      timeout: kTimeout,
-    );
+  ///
+  /// This strategy is build from [FetchStrategyBuilder.basic].
+  static Future<FetchInstructions> defaultFetchStrategy(Uri uri, FetchFailure failure) {
+    return _defaultFetchStrategyFunction(uri, failure);
   }
 
   @override
@@ -235,11 +208,12 @@ class NetworkImageWithRetry extends ImageProvider<NetworkImageWithRetry> {
 /// [NetworkImageWithRetry] to try again.
 ///
 /// See [NetworkImageWithRetry.defaultFetchStrategy] for an example.
-typedef FetchStrategy = Future<FetchInstructions> Function(Uri uri, FetchFailure failure);
+typedef Future<FetchInstructions> FetchStrategy(Uri uri, FetchFailure failure);
 
 /// Instructions [NetworkImageWithRetry] uses to fetch the image.
 @immutable
 class FetchInstructions {
+  /// Instructs [NetworkImageWithRetry] to give up trying to download the image.
   const FetchInstructions.giveUp({
     @required this.uri,
     this.alternativeImage,
@@ -247,6 +221,8 @@ class FetchInstructions {
       : shouldGiveUp = true,
         timeout = null;
 
+  /// Instructs [NetworkImageWithRetry] to attempt to download the image from
+  /// the given [uri] and [timeout] if it takes too long.
   const FetchInstructions.attempt({
     @required this.uri,
     @required this.timeout,
@@ -267,6 +243,16 @@ class FetchInstructions {
 
   /// Instructs to give up and use this image instead.
   final Future<ImageInfo> alternativeImage;
+
+  @override
+  String toString() {
+    return '$runtimeType(\n'
+      '  shouldGiveUp: $shouldGiveUp\n'
+      '  timeout: $timeout\n'
+      '  uri: $uri\n'
+      '  alternativeImage?: ${alternativeImage != null ? 'yes' : 'no'}\n'
+      ')';
+  }
 }
 
 /// Contains information about a failed attempt to fetch an image.
@@ -336,5 +322,117 @@ class _Uint8ListBuilder {
       newBuffer.setRange(0, _usedLength, _buffer);
       _buffer = newBuffer;
     }
+  }
+}
+
+/// Determines whether the given HTTP [statusCode] is transient.
+typedef bool TransientHttpStatusCodePredicate(int statusCode);
+
+/// Builds a [FetchStrategy] function that retries up to a certain amount of
+/// times for up to a certain amount of time.
+///
+/// Pauses between retries with pauses growing exponentially (known as
+/// exponential backoff). Each attempt is subject to a [timeout]. Retries only
+/// those HTTP status codes considered transient by a
+/// [transientHttpStatusCodePredicate] function.
+class FetchStrategyBuilder {
+  static const FetchStrategyBuilder basic = const FetchStrategyBuilder(
+    timeout: const Duration(seconds: 30),
+    totalFetchTimeout: const Duration(minutes: 1),
+    initialPauseBetweenRetries: const Duration(seconds: 1),
+    maxAttempts: 5,
+    exponentialBackoffMultiplier: 2,
+    transientHttpStatusCodePredicate: defaultTransientHttpStatusCodePredicate,
+  );
+
+  /// A list of HTTP status codes that can generally be retried.
+  ///
+  /// You may want to use a different list depending on the needs of your
+  /// application.
+  static const List<int> defaultTransientHttpStatusCodes = const <int>[
+    0,   // Network error
+    408, // Request timeout
+    500, // Internal server error
+    502, // Bad gateway
+    503, // Service unavailable
+    504 // Gateway timeout
+  ];
+
+  /// Creates a fetch strategy builder.
+  ///
+  /// All parameters must be non-null.
+  const FetchStrategyBuilder({
+    @required this.timeout,
+    @required this.totalFetchTimeout,
+    @required this.maxAttempts,
+    @required this.initialPauseBetweenRetries,
+    @required this.exponentialBackoffMultiplier,
+    @required this.transientHttpStatusCodePredicate,
+  }) : assert(timeout != null),
+       assert(totalFetchTimeout != null),
+       assert(maxAttempts != null),
+       assert(initialPauseBetweenRetries != null),
+       assert(exponentialBackoffMultiplier != null),
+       assert(transientHttpStatusCodePredicate != null);
+
+  /// Maximum amount of time a single fetch attempt is allowed to take.
+  final Duration timeout;
+
+  /// A strategy built by this builder will retry for up to this amount of time
+  /// before giving up.
+  final Duration totalFetchTimeout;
+
+  /// Maximum number of attempts a strategy will make before giving up.
+  final int maxAttempts;
+
+  /// Initial amount of time between retries.
+  final Duration initialPauseBetweenRetries;
+
+  /// The pause between retries is multiplied by this number with each attempt,
+  /// causing it to grow exponentially.
+  final int exponentialBackoffMultiplier;
+
+  /// A function that determines whether a given HTTP status code should be
+  /// retried.
+  final TransientHttpStatusCodePredicate transientHttpStatusCodePredicate;
+
+  /// Uses [defaultTransientHttpStatusCodes] to determine if the [statusCode] is
+  /// transient.
+  static bool defaultTransientHttpStatusCodePredicate(int statusCode) {
+    return defaultTransientHttpStatusCodes.contains(statusCode);
+  }
+
+  /// Builds a [FetchStrategy] that operates using the properties of this
+  /// builder.
+  FetchStrategy build() {
+    return (Uri uri, FetchFailure failure) async {
+      if (failure == null) {
+        // First attempt. Just load.
+        return new FetchInstructions.attempt(
+          uri: uri,
+          timeout: timeout,
+        );
+      }
+
+      final bool isRetriableFailure = transientHttpStatusCodePredicate(failure.httpStatusCode) ||
+          failure.originalException is io.SocketException;
+
+      // If cannot retry, give up.
+      if (!isRetriableFailure ||  // retrying will not help
+          failure.totalDuration > totalFetchTimeout ||  // taking too long
+          failure.attemptCount > maxAttempts) {  // too many attempts
+        return new FetchInstructions.giveUp(uri: uri);
+      }
+
+      // Exponential back-off.
+      final Duration pauseBetweenRetries = initialPauseBetweenRetries * math.pow(exponentialBackoffMultiplier, failure.attemptCount - 1);
+      await new Future<Null>.delayed(pauseBetweenRetries);
+
+      // Retry.
+      return new FetchInstructions.attempt(
+        uri: uri,
+        timeout: timeout,
+      );
+    };
   }
 }
