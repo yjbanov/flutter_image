@@ -12,7 +12,7 @@ set -x
 flutter packages get
 flutter analyze lib/ test/
 
-dart test/network_test_server.dart &
+$FLUTTER_HOME/bin/cache/dart-sdk/bin/dart test/network_test_server.dart &
 SERVER_PID=$!
 sleep 2
 
