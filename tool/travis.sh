@@ -11,4 +11,10 @@ set -x
 
 flutter packages get
 flutter analyze lib/ test/
+
+$FLUTTER_HOME/bin/cache/dart-sdk/bin/dart test/network_test_server.dart &
+SERVER_PID=$!
+sleep 2
+
 flutter test
+kill $SERVER_PID
